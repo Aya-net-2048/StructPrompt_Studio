@@ -1,5 +1,9 @@
 import { useState } from 'react';
 import { Play, CheckCircle2, XCircle, Terminal, FileWarning, Save, Zap } from 'lucide-react';
+import { fetch, Body } from '@tauri-apps/api/http';
+import { readTextFile, writeTextFile } from '@tauri-apps/api/fs';
+import { save } from '@tauri-apps/api/dialog';
+import Papa from 'papaparse';
 
 export default function RunEvaluation({ sampleSize, rules, filePath }: any) {
   const [running, setRunning] = useState(false);
@@ -45,9 +49,9 @@ export default function RunEvaluation({ sampleSize, rules, filePath }: any) {
     setProcessedData([]);
     setLogs(['[系统] 正在初始化生产级大模型链路...', `[API] 当前驱动核心: ${modelName}`, `[网络] 当前并发线程数: ${concurrency}`]);
     
-    // @ts-ignore
-    const fullData = await window.electronAPI.getSampleData(filePath, sampleSize);
-    const sourceRows = fullData.rows || [];
+    const fileContent = await readTextFile(filePath);
+    const parsedData = Papa.parse(fileContent, { header: true, skipEmptyLines: true });
+    const sourceRows = (parsedData.data as any[]).slice(0, sampleSize);
     const limit = sourceRows.length;
     
     addLog(`[系统] 成功装载待提测数据 ${limit} 条。开始执行高并发网络请求池...`);
@@ -80,7 +84,7 @@ export default function RunEvaluation({ sampleSize, rules, filePath }: any) {
 
         // 提取目标文本
         let userPrompt = "【待分析真实文本】\\n";
-        const uniqueSources = [...new Set(rules.map((r: any) => r.sourceColumn).filter(Boolean))];
+        const uniqueSources = [...new Set<string>(rules.map((r: any) => r.sourceColumn).filter(Boolean))];
         uniqueSources.forEach((src) => {
           userPrompt += `数据列 '${src}' 的内容:\\n"""\\n${sourceRow[src] || ''}\\n"""\\n\\n`;
         });
@@ -97,17 +101,22 @@ export default function RunEvaluation({ sampleSize, rules, filePath }: any) {
 
         while (retryCount <= 3) {
           try {
-            // @ts-ignore
-            const res = await window.electronAPI.callLLM({ baseUrl, apiKey, model: modelName, messages });
+            const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+              body: Body.json({ model: modelName, messages, temperature: 0.1 })
+            });
             
-            if (!res.success) {
-              addLog(`❌ [样本 ${count}/${limit}] 网络异常或API报错: ${res.error}`);
+            if (!response.ok) {
+              addLog(`❌ [样本 ${count}/${limit}] API报错: ${response.status}`);
               finalRowStatus = 'exception';
               break;
             }
+            const resData = response.data as any;
+            const assistantMsg = resData.choices?.[0]?.message?.content || '';
 
             // 尝试解析 JSON
-            let rawText = res.data.trim();
+            let rawText = assistantMsg.trim();
             if (rawText.startsWith('```json')) {
               rawText = rawText.replace(/^```json/, '').replace(/```$/, '').trim();
             } else if (rawText.startsWith('```')) {
@@ -119,7 +128,7 @@ export default function RunEvaluation({ sampleSize, rules, filePath }: any) {
               parsed = JSON.parse(rawText);
             } catch (e) {
               addLog(`⚠️ [样本 ${count}/${limit}] JSON 格式破坏，尝试要求重发 (第 ${retryCount+1} 次)`);
-              messages.push({ role: 'assistant', content: res.data });
+              messages.push({ role: 'assistant', content: assistantMsg });
               messages.push({ role: 'user', content: "你输出的不是合法的 JSON 格式。请直接且仅输出合法的 JSON 文本，不要任何 Markdown 标记或多余字符！" });
               retryCount++;
               continue;
@@ -130,7 +139,7 @@ export default function RunEvaluation({ sampleSize, rules, filePath }: any) {
             let isValid = true;
             let hasEmpty = false;
 
-            rules.forEach((rule: any) => {
+            for (const rule of rules) {
               const resCol = rule.resultColumn || '未命名提取结果';
               let val = parsed[resCol];
               
@@ -139,6 +148,36 @@ export default function RunEvaluation({ sampleSize, rules, filePath }: any) {
               } else if (rule.useDictionary && rule.dictionaryValues) {
                 const dict = rule.dictionaryValues.split(/[,，|]/).map((x: string) => x.trim()).filter(Boolean);
                 if (!dict.includes(String(val))) {
+                  // LLM Secondary Check Correction
+                  if (rule.useCorrection) {
+                    addLog(`🔍 [样本 ${count}/${limit}] 触发智能语义纠偏: 判断 "${val}" 是否等同于 [${dict.join(',')}] 之一...`);
+                    try {
+                        const correctionRes = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                            body: Body.json({
+                                model: modelName,
+                                messages: [
+                                    { role: 'system', content: `你是一个语义判定系统。标准词库为 [${dict.join(', ')}]，当前输入为 B。请判断 B 是否是标准词库中某一项的同义词。若是，仅输出该标准词；若不是，仅输出 false。` },
+                                    { role: 'user', content: `当前词汇: ${val}` }
+                                ],
+                                temperature: 0.1
+                            })
+                        });
+                        const cMsg = (((correctionRes.data as any).choices?.[0]?.message?.content) || '').trim();
+                        if (dict.includes(cMsg)) {
+                            addLog(`✨ [样本 ${count}/${limit}] 纠偏成功: 将 "${val}" 修正为 "${cMsg}"`);
+                            parsed[resCol] = cMsg;
+                            val = cMsg;
+                            continue; // Valid now! Skip exception logic
+                        } else {
+                            addLog(`⚠️ [样本 ${count}/${limit}] 纠偏失败: 模型判定 "${val}" 与白名单无关。`);
+                        }
+                    } catch (e) {
+                        addLog(`⚠️ [样本 ${count}/${limit}] 纠偏请求异常, 回退常规拦截。`);
+                    }
+                  }
+
                   if (rule.strategy === 'regenerate') {
                     isValid = false;
                     validationError += `字段 '${resCol}' 提取的值 '${val}' 属于违规捏造，不在白名单 [${dict.join(', ')}] 中！\\n`;
@@ -147,11 +186,11 @@ export default function RunEvaluation({ sampleSize, rules, filePath }: any) {
                   }
                 }
               }
-            });
+            }
 
             if (!isValid && retryCount < 3) {
               addLog(`⚠️ [样本 ${count}/${limit}] 触发防幻觉白名单拦截: 正在执行 Regenerate (第 ${retryCount+1} 次)`);
-              messages.push({ role: 'assistant', content: res.data });
+              messages.push({ role: 'assistant', content: assistantMsg });
               messages.push({ role: 'user', content: `严重错误：\\n${validationError}\\n请立即纠正并重新返回完全符合白名单规范的 JSON！` });
               retryCount++;
             } else {
@@ -210,10 +249,18 @@ export default function RunEvaluation({ sampleSize, rules, filePath }: any) {
   };
 
   const handleExport = async () => {
-    // @ts-ignore
-    const res = await window.electronAPI.saveResultFile(JSON.stringify(processedData, null, 2), 'evaluation_results.csv');
-    if (res) {
-      alert("实盘数据导出成功: " + res);
+    try {
+      const savePath = await save({
+        filters: [{ name: 'CSV Data', extensions: ['csv'] }],
+        defaultPath: 'evaluation_results.csv'
+      });
+      if (savePath) {
+        const csvContent = Papa.unparse(processedData);
+        await writeTextFile(savePath, csvContent);
+        alert("实盘数据导出成功: " + savePath);
+      }
+    } catch (e) {
+      alert("导出失败: " + e);
     }
   };
 

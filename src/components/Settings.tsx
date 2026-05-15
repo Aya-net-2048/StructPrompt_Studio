@@ -73,21 +73,7 @@ export default function Settings() {
 
       </div>
 
-      <div style={{ background: 'var(--bg-secondary)', padding: '20px', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
-        <h3 style={{ margin: '0 0 12px 0', fontSize: '14px' }}>Level 2：云端语义纠偏机制</h3>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-          <input 
-            type="checkbox" 
-            checked={cloudCorrection}
-            onChange={(e) => setCloudCorrection(e.target.checked)}
-            style={{ accentColor: 'var(--accent-primary)' }}
-          />
-          启用大语言模型进行相似度矫正 (消耗Token)
-        </label>
-        <p style={{ margin: '8px 0 0', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-          开启后如果抽取到无规律的同义词，系统将自动发包请求大模型协助判定，把异形词（如“欢快”）规约至你预设标准范围内（如“正向”）。
-        </p>
-      </div>
+
 
       <div>
         <button className="btn" onClick={handleSave}>

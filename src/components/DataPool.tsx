@@ -1,5 +1,8 @@
 import { useState } from 'react';
 import { Database, FileText, TableProperties } from 'lucide-react';
+import { open } from '@tauri-apps/api/dialog';
+import { readTextFile } from '@tauri-apps/api/fs';
+import Papa from 'papaparse';
 
 export default function DataPool({ filePath, setFilePath, sampleData, setSampleData, sampleSize, setSampleSize }: any) {
   const [loading, setLoading] = useState(false);
@@ -11,18 +14,37 @@ export default function DataPool({ filePath, setFilePath, sampleData, setSampleD
   };
 
   const handleImport = async () => {
-    // @ts-ignore
-    const path = await window.electronAPI.openFileDialog();
-    if (path) {
-      setFilePath(path);
-      setLoading(true);
-      try {
-        // @ts-ignore
-        const data = await window.electronAPI.getSampleData(path, 15);
-        setSampleData(data);
-      } catch (e) {
-        alert("Failed to parse file: " + e);
+    try {
+      const selected = await open({
+        filters: [{ name: 'CSV Data', extensions: ['csv'] }]
+      });
+      
+      if (selected && typeof selected === 'string') {
+        setFilePath(selected);
+        setLoading(true);
+        
+        const fileContent = await readTextFile(selected);
+        
+        Papa.parse(fileContent, {
+          header: true,
+          preview: 15,
+          skipEmptyLines: true,
+          complete: (results) => {
+            setSampleData({
+              columns: results.meta.fields || [],
+              rows: results.data,
+              totalSize: (fileContent.length / 1024 / 1024).toFixed(2) + ' MB'
+            });
+            setLoading(false);
+          },
+          error: (error) => {
+            alert("Failed to parse file: " + error.message);
+            setLoading(false);
+          }
+        });
       }
+    } catch (e) {
+      alert("Error opening file: " + e);
       setLoading(false);
     }
   };

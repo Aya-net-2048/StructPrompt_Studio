@@ -8,6 +8,7 @@ export default function PromptIDE({ sampleData, rules, setRules }: any) {
       resultColumn: '',
       instruction: '',
       useDictionary: false,
+      useCorrection: false,
       dictionaryValues: '',
       strategy: 'exception'
     };
@@ -132,6 +133,17 @@ export default function PromptIDE({ sampleData, rules, setRules }: any) {
                   
                   {rule.useDictionary && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                        <Lightbulb size={16} color={rule.useCorrection ? 'var(--accent-primary)' : 'var(--text-secondary)'} />
+                        <label style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--accent-primary)' }}>
+                          <input 
+                            type="checkbox" 
+                            checked={rule.useCorrection} 
+                            onChange={e => updateRule(i, 'useCorrection', e.target.checked)}
+                          />
+                          开启智能同义词纠偏 (LLM Secondary Check)
+                        </label>
+                      </div>
                       <input 
                         type="text" 
                         placeholder="合法词汇，用逗号分隔 (如: 积极,消极,平淡)" 
