@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Database, FileText, TableProperties } from 'lucide-react';
 import { open } from '@tauri-apps/api/dialog';
-import { readTextFile } from '@tauri-apps/api/fs';
+import { readBinaryFile, readTextFile } from '@tauri-apps/api/fs';
 import Papa from 'papaparse';
 
 export default function DataPool({ filePath, setFilePath, sampleData, setSampleData, sampleSize, setSampleSize }: any) {
@@ -23,7 +23,13 @@ export default function DataPool({ filePath, setFilePath, sampleData, setSampleD
         setFilePath(selected);
         setLoading(true);
         
-        const fileContent = await readTextFile(selected);
+        const bytes = await readBinaryFile(selected);
+        let fileContent = '';
+        try {
+          fileContent = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        } catch (e) {
+          fileContent = new TextDecoder('gbk').decode(bytes);
+        }
         
         Papa.parse(fileContent, {
           header: true,

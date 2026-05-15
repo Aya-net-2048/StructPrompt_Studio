@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Play, CheckCircle2, XCircle, Terminal, FileWarning, Save, Zap } from 'lucide-react';
 import { fetch, Body } from '@tauri-apps/api/http';
-import { readTextFile, writeTextFile } from '@tauri-apps/api/fs';
+import { readBinaryFile, writeTextFile } from '@tauri-apps/api/fs';
 import { save } from '@tauri-apps/api/dialog';
 import Papa from 'papaparse';
 
@@ -49,7 +49,13 @@ export default function RunEvaluation({ sampleSize, rules, filePath }: any) {
     setProcessedData([]);
     setLogs(['[系统] 正在初始化生产级大模型链路...', `[API] 当前驱动核心: ${modelName}`, `[网络] 当前并发线程数: ${concurrency}`]);
     
-    const fileContent = await readTextFile(filePath);
+    const bytes = await readBinaryFile(filePath);
+    let fileContent = '';
+    try {
+      fileContent = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch (e) {
+      fileContent = new TextDecoder('gbk').decode(bytes);
+    }
     const parsedData = Papa.parse(fileContent, { header: true, skipEmptyLines: true });
     const sourceRows = (parsedData.data as any[]).slice(0, sampleSize);
     const limit = sourceRows.length;
