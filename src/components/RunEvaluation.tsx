@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Play, CheckCircle2, XCircle, Terminal, FileWarning, Save, Zap } from 'lucide-react';
 import { fetch, Body } from '@tauri-apps/api/http';
-import { readBinaryFile, writeTextFile } from '@tauri-apps/api/fs';
+import { invoke } from '@tauri-apps/api/tauri';
+import { writeTextFile } from '@tauri-apps/api/fs';
 import { save } from '@tauri-apps/api/dialog';
 import Papa from 'papaparse';
 
@@ -49,15 +50,15 @@ export default function RunEvaluation({ sampleSize, rules, filePath }: any) {
     setProcessedData([]);
     setLogs(['[系统] 正在初始化生产级大模型链路...', `[API] 当前驱动核心: ${modelName}`, `[网络] 当前并发线程数: ${concurrency}`]);
     
-    const bytes = await readBinaryFile(filePath);
-    let fileContent = '';
+    let sourceRows: any[] = [];
     try {
-      fileContent = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      const parsedData: any = await invoke('parse_dataset', { path: filePath, limit: sampleSize });
+      sourceRows = parsedData.rows || [];
     } catch (e) {
-      fileContent = new TextDecoder('gbk').decode(bytes);
+      alert("提取数据集失败: " + e);
+      setRunning(false);
+      return;
     }
-    const parsedData = Papa.parse(fileContent, { header: true, skipEmptyLines: true });
-    const sourceRows = (parsedData.data as any[]).slice(0, sampleSize);
     const limit = sourceRows.length;
     
     addLog(`[系统] 成功装载待提测数据 ${limit} 条。开始执行高并发网络请求池...`);

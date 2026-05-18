@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { Database, FileText, TableProperties } from 'lucide-react';
 import { open } from '@tauri-apps/api/dialog';
-import { readBinaryFile, readTextFile } from '@tauri-apps/api/fs';
-import Papa from 'papaparse';
+import { invoke } from '@tauri-apps/api/tauri';
 
 export default function DataPool({ filePath, setFilePath, sampleData, setSampleData, sampleSize, setSampleSize }: any) {
   const [loading, setLoading] = useState(false);
@@ -16,38 +15,26 @@ export default function DataPool({ filePath, setFilePath, sampleData, setSampleD
   const handleImport = async () => {
     try {
       const selected = await open({
-        filters: [{ name: 'CSV Data', extensions: ['csv'] }]
+        filters: [{ name: 'Data Files', extensions: ['csv', 'xlsx', 'xls'] }]
       });
       
       if (selected && typeof selected === 'string') {
         setFilePath(selected);
         setLoading(true);
         
-        const bytes = await readBinaryFile(selected);
-        let fileContent = '';
         try {
-          fileContent = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-        } catch (e) {
-          fileContent = new TextDecoder('gbk').decode(bytes);
+          const parsedData: any = await invoke('parse_dataset', { path: selected, limit: 15 });
+          
+          setSampleData({
+            columns: parsedData.columns || [],
+            rows: parsedData.rows || [],
+            totalSize: parsedData.total_size
+          });
+        } catch (err) {
+          alert("解析文件失败: " + err);
+        } finally {
+          setLoading(false);
         }
-        
-        Papa.parse(fileContent, {
-          header: true,
-          preview: 15,
-          skipEmptyLines: true,
-          complete: (results) => {
-            setSampleData({
-              columns: results.meta.fields || [],
-              rows: results.data,
-              totalSize: (fileContent.length / 1024 / 1024).toFixed(2) + ' MB'
-            });
-            setLoading(false);
-          },
-          error: (error) => {
-            alert("Failed to parse file: " + error.message);
-            setLoading(false);
-          }
-        });
       }
     } catch (e) {
       alert("Error opening file: " + e);
